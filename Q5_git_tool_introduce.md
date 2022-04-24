@@ -1,6 +1,7 @@
 ## Question:
 ### Please briefly introduce the version control tool Git on how it work and what it can do. It would be better if you could give several concise scenario.
 ### Answer:
+######  Version control is a way to manage and track any changes you make to your files.    Git is a version control system that developers use all over the world. It helps you track different versions of your code and collaborate with other developers.
 
 ---
 ##### 1.設定config
