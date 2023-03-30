@@ -29,6 +29,7 @@ Lcdetypename = {
             "lcde_d" : "大陸地區法人"
       }
 
+check_status_list = ['一般道路', '旱田', '道路相關設施', '未使用地']
 
 def get_lcdetype_flag(json_dict):
     str_ = ""
@@ -98,7 +99,7 @@ def location_query(l_payload):
     pattern = r'現況調查:(.*?)\(2'
     l_status = re.search(pattern, LocationQuery_result[1])
     l_status = l_status.group(1)
-    return l_own_area, l_status
+    return l_own_area.strip(), l_status.strip()
 
 
 def get_land_info(get_payload):
@@ -128,12 +129,13 @@ def get_land_info(get_payload):
     l_price = getLandInfo_result['ralid']['AA16']
     l_owner = get_lcdetype_flag(getLandInfo_result['lcdetype'])
     t_value = getLandInfo_result['ralid']['AA16'] * getLandInfo_result['ralid']['AA10']
-    return l_area, l_price, t_value, l_owner
+    return l_area, l_price, t_value, l_owner.strip()
 
 
 def get_info(input_array, x_pos, y_pos):
     # '120.711271,24.160243' ;120.702043,24.170301
     # qryTile
+    score = {}
     qryTile_url = f'https://landmaps.nlsc.gov.tw/S_Maps/qryTileMapIndex?callback=jQuery&type=2&flag=1&city=B&x={str(x_pos)}&y={str(y_pos)}'
     qryTile_headers = {
         'Referer': 'https://maps.nlsc.gov.tw/',
@@ -148,17 +150,17 @@ def get_info(input_array, x_pos, y_pos):
     match = re.search(pattern, res_json).group(1)
     match = json.loads(match)
     try:
-        sect = match['sect']
-        landno = match['landno']
-        landstr = match['sectStr']
-        decoded_str = base64.b64decode(landstr).decode("utf-8")
+        sect = match['sect'].strip()
+        landno = match['landno'].strip()
+        landstr = match['sectStr'].strip()
+        decoded_str = base64.b64decode(landstr).decode("utf-8").strip()
         # getLandInfo
     except Exception as E:
         print(E.args)
         return input_array
     print(f'地段為:{sect}')
     print(f'地號為:{landno}')
-    # ['地段名', '地段', '地號','行政區', '狀態', '面積', '估值', '總值', '使用者']
+
     try:
         landno_array = np.array(input_array).T[2]
     except:
@@ -166,58 +168,67 @@ def get_info(input_array, x_pos, y_pos):
 
     query_pos = {'center': str(x_pos) + ',' + str(y_pos)}
     land_payload = {'city': 'B', 'sect': sect, 'landno': landno}
+
     # 確認是否真實為一般道路/旱田/道路相關設施
     if not input_array or (landno not in landno_array):
         # LocationQuery
         own_area, land_status = location_query(query_pos)
         # 土地調查
         land_area, land_price, total_value, land_owner = get_land_info(land_payload)
+        score[land_status] = 1
         input_array.append(
             [decoded_str, sect, landno, own_area, land_status, land_area, land_price, total_value, land_owner,
-             query_pos['center']])
+             np.round(x_pos, 6), np.round(y_pos, 6), score])
 
         print(f"面積為:{land_area} 平方公尺")
         print(f"單價為:{land_price} 元/平方公尺")
         print(f"擁有者:{land_owner}")
-        print(f'總值:{total_value}元')
-        print(f'土地調查為:{land_status}')
+        print(f"總值:{total_value}元")
+        print(f"土地調查為:{land_status}")
         print("------***新增***------")
 
         return input_array
-
     elif landno in landno_array:
         # print(f"{sect}在{input_array['地號']}")
+        print(f'------***重複地號，確認中***------')
         idx_check = np.where(landno_array == landno)[0][0]
         check_sect = input_array[idx_check][1]
         check_status = input_array[idx_check][4]
-        check_status_list = ['一般道路', '旱田', '道路相關設施']
-        if sect == check_sect:
-            if check_status in check_status_list:
-                own_area, land_status = location_query(query_pos)
-                if land_status in check_status_list:
-                    return input_array
-                elif land_status not in check_status_list:
-                    input_array[idx_check][4] = land_status
-                    return input_array
+
+        if sect.strip() == check_sect:
+            # 表示為同地段同地號，則確認
+            own_area, land_status = location_query(query_pos)
+            if land_status not in input_array[idx_check][-1]:
+                input_array[idx_check][-1][land_status] = 1
             else:
-                return input_array
+                input_array[idx_check][-1][land_status] += 1
+            max_score_land_status = max(input_array[idx_check][-1], key=input_array[idx_check][-1].get)
+            print(f'本次:{land_status}->最高分:{max_score_land_status}')
+            input_array[idx_check][4] = max_score_land_status
+            return input_array
         else:
             # 表示為不同地段同地號，則新增
             # LocationQuery
             own_area, land_status = location_query(query_pos)
             # 土地調查
             land_area, land_price, total_value, land_owner = get_land_info(land_payload)
+            print(f'------***不同地段同地號，新增***------')
+            score[land_status] = 1
             input_array.append(
                 [decoded_str, sect, landno, own_area, land_status, land_area, land_price, total_value, land_owner,
-                 query_pos['center']])
+                 np.round(x_pos, 6), np.round(y_pos, 6), score])
             return input_array
 
 
 # data_set = {'地段名':[], '地段':[], '地號':[],'行政區':[], '狀態':[], '面積':[], '估值':[], '總值':[], '使用者':[]}
-col_names = ['地段名', '地段', '地號', '行政區', '狀態', '面積', '估值', '總值', '使用者', '座標']
-x_min, x_max = 120.685709, 120.721948
-y_min, y_max = 24.172339, 24.200506
-x, y = 120.685709, 24.172339
+col_names = ['地段名', '地段', '地號', '行政區', '狀態', '面積', '估值', '總值', '使用者', '座標x', '座標y', 'score']
+# debug:120.721069	24.174339
+# x_min, x_max = 120.685709, 120.721948
+# y_min, y_max = 24.172339, 24.200506
+# x, y = 120.685709, 24.172339
+x_min, x_max = 120.721029, 120.721948
+y_min, y_max = 24.174339, 24.200506
+x, y = 120.721029, 24.174339
 result_array = []
 
 while True:
